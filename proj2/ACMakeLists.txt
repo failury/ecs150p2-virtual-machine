@@ -19,4 +19,4 @@ add_executable(proj2
         src/main.c
         src/VirtualMachine.h
         src/VirtualMachineUtils.c
-        Makefile)
+        Makefile src/VirtualMachine.cpp)

@@ -37,7 +37,8 @@ typedef void (*TVMMainEntry)(int, char*[]);
 typedef void (*TVMThreadEntry)(void *);
 
 TVMStatus VMStart(int tickms, int argc, char *argv[]);
-
+TVMMainEntry VMLoadModule(const char *module);
+void VMUnloadModule(void);
 TVMStatus VMTickMS(int *tickmsref);
 TVMStatus VMTickCount(TVMTickRef tickref);
 

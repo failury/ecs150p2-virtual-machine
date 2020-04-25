@@ -114,6 +114,9 @@
 		<Unit filename="/home/failury/Desktop/ecs150p2-virtual-machine/proj2/src/Machine.h">
 			<Option target="proj2"/>
 		</Unit>
+		<Unit filename="/home/failury/Desktop/ecs150p2-virtual-machine/proj2/src/VirtualMachine.cpp">
+			<Option target="proj2"/>
+		</Unit>
 		<Unit filename="/home/failury/Desktop/ecs150p2-virtual-machine/proj2/src/VirtualMachine.h">
 			<Option target="proj2"/>
 		</Unit>
