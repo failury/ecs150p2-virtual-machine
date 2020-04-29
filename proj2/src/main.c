@@ -33,7 +33,7 @@ int main(int argc, char *argv[]){
         return 1;
     }
     
-    
+
     if(VM_STATUS_SUCCESS != VMStart(TickTimeMS, argc - Offset, argv + Offset)){
         fprintf(stderr,"Virtual Machine failed to start.\n");    
         return 1;
