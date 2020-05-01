@@ -14,7 +14,11 @@
 #include <algorithm>
 extern "C" {
 #define PL() std::cout << "@ line" <<__LINE__
-typedef void (*TVMMainEntry)(int, char *[]);
+typedef void (*TVMMainEntry)(int, char*[]);
+#define SMALL_BUFFER_SIZE       256
+#define VMPrint(format, ...) VMFilePrint ( 1, format, ##__VA_ARGS__)
+#define VMPrintError(format, ...) VMFilePrint ( 2, format, ##__VA_ARGS__)
+TVMStatus VMFilePrint(int filedescriptor, const char *format, ...);
 void Scheduler();
 volatile int ticks = 0;
 volatile int tickCount = 0;
@@ -31,6 +35,7 @@ struct TCB {
     TVMMemorySize MemorySize;
     void *Param;
     void *StackAddress;
+    int FileData;
 };
 std::vector<TCB> ThreadList;
 std::vector<TCB> Ready;
@@ -42,12 +47,12 @@ bool ComparePrio(const TCB &a, const TCB &b)
 void Callback(void *CallData) {
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
-    for (int i = 0; i < Sleep.size(); i++) {
+    for (int i = 0; i < (int)Sleep.size(); i++) {
         Sleep[i].SleepTime--;
-//        char tmp[12]={0x0};
-//        sprintf(tmp,"%11d", int(Sleep[i].SleepTime));
-//        write(STDOUT_FILENO,tmp,sizeof(tmp));
-//        write(STDOUT_FILENO,"\n",1);
+        char tmp[12]={0x0};
+        sprintf(tmp,"%11d", int(Sleep[i].SleepTime));
+        write(STDOUT_FILENO,tmp,sizeof(tmp));
+        write(STDOUT_FILENO,"\n",1);
         if (Sleep[i].SleepTime < 1) {
             TCB AwakeThread = Sleep[i];
             Sleep.erase(Sleep.begin() + i);
@@ -136,14 +141,6 @@ TVMStatus VMTickMS(int *tickmsref) {
         return VM_STATUS_ERROR_INVALID_PARAMETER;
     }
 }
-TVMStatus VMFileWrite(int filedescriptor, void *data, int *length) {
-    if (data == NULL) {
-        return VM_STATUS_ERROR_INVALID_PARAMETER;
-    } else {
-        write(STDOUT_FILENO, data, *length);
-        return VM_STATUS_SUCCESS;
-    }
-}
 TVMStatus VMTickCount(TVMTickRef tickref) {
     if (tickref != NULL) {
         TMachineSignalState signal;
@@ -228,22 +225,8 @@ TVMStatus VMThreadTerminate(TVMThreadID thread) {
     write(STDOUT_FILENO,"termi",5);
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
-    if ( ThreadList[thread].State == VM_THREAD_STATE_RUNNING){
-        if ( Ready.empty() && Sleep.empty()){
-            MachineResumeSignals(&signal);
-            return VM_STATUS_SUCCESS;
-        }
-        Scheduler();
-    }else if( ThreadList[thread].State == VM_THREAD_STATE_WAITING){
-        for (int i = 0; i < Sleep.size(); i++)
-        {
-            if (thread == Sleep[i].ID ){
-                Sleep.erase(Sleep.begin() + i);
-                break;
-            }
-        }
-    }
     ThreadList[thread].State = VM_THREAD_STATE_DEAD;
+
     MachineResumeSignals(&signal);
     return VM_STATUS_SUCCESS;
 }
@@ -284,18 +267,82 @@ TVMStatus VMThreadSleep(TVMTick tick) {
     return VM_STATUS_SUCCESS;
 
 }
+void FileCallback(void *calldata, int result)
+{
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    TCB* thread = (TCB*)calldata;
+    thread->FileData = result;
+    thread->State = VM_THREAD_STATE_READY;
+    Scheduler();
+    MachineResumeSignals(&signal);
+}
+TVMStatus VMFileOpen(const char *filename, int flags, int mode,
+                     int *filedescriptor) {
+    if (filename == NULL || filedescriptor == NULL) {
+        return VM_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    MachineFileOpen(filename, flags, mode, FileCallback, &ThreadList[RunningThreadID]);
+    ThreadList[RunningThreadID].State = VM_THREAD_STATE_WAITING;
+    Scheduler();
+    *filedescriptor = ThreadList[RunningThreadID].FileData;
+    MachineResumeSignals(&signal);
+    return VM_STATUS_SUCCESS;
+}
+TVMStatus VMFileClose(int filedescriptor)
+{
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    MachineFileClose(filedescriptor, FileCallback, &ThreadList[RunningThreadID]);
+    Scheduler();
+    MachineResumeSignals(&signal);
+    return VM_STATUS_SUCCESS;
+}
+TVMStatus VMFileRead(int filedescriptor, void *data, int *length)
+{
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    if (length == NULL || data == NULL) {
+        return VM_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    MachineFileRead(filedescriptor, data, *length, FileCallback, &ThreadList[RunningThreadID]);
+    ThreadList[RunningThreadID].State = VM_THREAD_STATE_WAITING;
+    Scheduler();
+    *length = ThreadList[RunningThreadID].FileData;
+    MachineResumeSignals(&signal);
+    return VM_STATUS_SUCCESS;
+}
+TVMStatus VMFileWrite(int filedescriptor, void *data, int *length)
+{
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
+    if (length == NULL || data == NULL) {
+        return VM_STATUS_ERROR_INVALID_PARAMETER;
+    }
+    MachineFileWrite(filedescriptor, data, *length, FileCallback, &ThreadList[RunningThreadID]);
+    ThreadList[RunningThreadID].State = VM_THREAD_STATE_WAITING;
+    Scheduler();
+    MachineResumeSignals(&signal);
+    return VM_STATUS_SUCCESS;
+}
+TVMStatus VMFileSeek(int filedescriptor, int offset, int whence, int *newoffset)
+{
+    TMachineSignalState signal;
+    MachineSuspendSignals(&signal);
 
-//TVMStatus VMFilePrint(int filedescriptor, const char *format, ...) {
-//
-//}
-//
-//TVMStatus VMFileOpen(const char *filename, int flags, int mode,
-//                     int *filedescriptor) {
-//    if (filename == NULL || filedescriptor == NULL) {
-//        return VM_STATUS_ERROR_INVALID_PARAMETER;
-//    }
-//    TMachineSignalState signal;
-//    MachineSuspendSignals(&signal);
-//    MachineFileOpen(filename, flags, mode, FileCallback, &fs);
-//}
+    if (newoffset == NULL) {
+        return VM_STATUS_FAILURE;
+    }
+
+
+    *newoffset = offset;
+    MachineFileSeek(filedescriptor, offset, whence, FileCallback, &ThreadList[RunningThreadID]);
+    ThreadList[RunningThreadID].State = VM_THREAD_STATE_WAITING;
+    Scheduler();
+    MachineResumeSignals(&signal);
+    return VM_STATUS_SUCCESS;
+
+}
 }
