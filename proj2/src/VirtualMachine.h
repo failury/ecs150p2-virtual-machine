@@ -48,7 +48,8 @@ TVMStatus VMThreadTerminate(TVMThreadID thread);
 TVMStatus VMThreadID(TVMThreadIDRef threadref);
 TVMStatus VMThreadState(TVMThreadID thread, TVMThreadStateRef stateref);
 TVMStatus VMThreadSleep(TVMTick tick);
-
+TVMMainEntry VMLoadModule(const char *module);
+void VMUnloadModule(void);
 #define VMPrint(format, ...)        VMFilePrint ( 1,  format, ##__VA_ARGS__)
 #define VMPrintError(format, ...)   VMFilePrint ( 2,  format, ##__VA_ARGS__)
 

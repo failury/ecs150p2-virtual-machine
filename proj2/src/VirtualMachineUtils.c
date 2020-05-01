@@ -1,4 +1,4 @@
-#include "VirtualMachine.h" 	 	    		
+#include "VirtualMachine.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,13 +9,13 @@
 void *VMLibraryHandle = NULL;
 
 TVMMainEntry VMLoadModule(const char *module){
-    
+
     VMLibraryHandle = dlopen(module, RTLD_NOW);
     if(NULL == VMLibraryHandle){
         fprintf(stderr,"Error dlopen failed %s\n",dlerror());
         return NULL;
     }
-    
+
     return (TVMMainEntry)dlsym(VMLibraryHandle, "VMMain");
 }
 
