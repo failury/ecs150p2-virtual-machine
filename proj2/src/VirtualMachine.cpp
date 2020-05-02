@@ -12,6 +12,7 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
+#include <bits/stdc++.h>
 extern "C" {
 #define PL() std::cout << "@ line" <<__LINE__
 typedef void (*TVMMainEntry)(int, char*[]);
@@ -20,8 +21,8 @@ typedef void (*TVMMainEntry)(int, char*[]);
 #define VMPrintError(format, ...) VMFilePrint ( 2, format, ##__VA_ARGS__)
 #define VM_TIMEOUT_INFINITE ((TVMTick)0)
 #define VM_TIMEOUT_IMMEDIATE ((TVMTick)-1)
-void Scheduler(TVMThreadState State);
-volatile int ticks = 0;
+void Scheduler(TVMThreadState NextState);
+volatile int Tickms = 0;
 volatile int tickCount = 0;
 volatile TVMThreadID RunningThreadID;
 struct TCB {
@@ -40,19 +41,26 @@ struct TCB {
 std::vector<TCB> ThreadList;
 std::vector<TCB> Ready;
 std::vector<TCB> Sleep;
-bool ComparePrio(const TCB &a, const TCB &b)
-{
-    return b.Priority <= a.Priority;
+void SORT(){
+        int i, j;
+        int n = Ready.size();
+        for (i = 0; i < n-1; i++)
+
+            for (j = 0; j < n-i-1; j++)
+                if (Ready[j].Priority < Ready[j+1].Priority)
+                    std::swap(Ready[j], Ready[j+1]);
 }
 void Callback(void *CallData) {
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
+    tickCount++;
     for (int i = 0; i < (int)Sleep.size(); i++) {
         Sleep[i].SleepTime--;
         if (Sleep[i].SleepTime < 1 && Sleep[i].State != VM_THREAD_STATE_DEAD) {
             TCB AwakeThread = Sleep[i];
             Sleep.erase(Sleep.begin() + i);
             AwakeThread.State = VM_THREAD_STATE_READY;
+            ThreadList[AwakeThread.ID].State = VM_THREAD_STATE_READY;
             Ready.push_back(AwakeThread);
             Scheduler(VM_THREAD_STATE_READY);
         }
@@ -60,37 +68,43 @@ void Callback(void *CallData) {
 //        sprintf(tmp,"%11d", int(Sleep[i].SleepTime));
 //        write(STDOUT_FILENO,tmp,sizeof(tmp));
     }
-    if ( ThreadList[RunningThreadID].Priority == ThreadList[Ready.front().ID].Priority){
+    if (!Ready.empty() && ThreadList[RunningThreadID].Priority == ThreadList[Ready.front().ID].Priority){
         Scheduler(VM_THREAD_STATE_READY);
     }
     MachineResumeSignals(&signal);
 }
-void Scheduler(TVMThreadState State) {
+void Scheduler(TVMThreadState NextState) {
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
     TCB NextThread;
     int TempID = RunningThreadID;
     NextThread = ThreadList[1];
-    while (!Ready.empty()){
-        std::sort(Ready.begin(),Ready.end(),ComparePrio);
+    if (!Ready.empty()){
+//        std::sort(Ready.begin(),Ready.end(),ComparePrio);
+        SORT();
         NextThread = Ready.front();
         Ready.erase(Ready.begin());
         if ( ThreadList[NextThread.ID].State == VM_THREAD_STATE_READY){
             NextThread = ThreadList[NextThread.ID];
         }
     }
-    if(State == VM_THREAD_STATE_READY){
+    if(NextState == VM_THREAD_STATE_READY){
         ThreadList[RunningThreadID].State = VM_THREAD_STATE_READY;
         if(RunningThreadID != 1 ){
             Ready.push_back(ThreadList[RunningThreadID]);
         }
-    } else if (State == VM_THREAD_STATE_WAITING){
+    } else if (NextState == VM_THREAD_STATE_WAITING){
         ThreadList[RunningThreadID].State = VM_THREAD_STATE_WAITING;
         Sleep.push_back( ThreadList[RunningThreadID]);
-    } else if ( State == VM_THREAD_STATE_DEAD){
+    } else if (NextState == VM_THREAD_STATE_DEAD){
         ThreadList[RunningThreadID].State = VM_THREAD_STATE_DEAD;
         Sleep[RunningThreadID].State = VM_THREAD_STATE_DEAD;
         ThreadList[RunningThreadID].SleepTime = 0;
+    }
+    if( NextThread.ID == RunningThreadID){
+        //no neeed to switch
+        MachineResumeSignals(&signal);
+        return;
     }
     ThreadList[NextThread.ID].State = VM_THREAD_STATE_RUNNING;
     RunningThreadID = NextThread.ID;
@@ -119,6 +133,7 @@ void skeleton(void *param) {
 }
 TVMStatus VMStart(int tickms, int argc, char *argv[]) {
     MachineInitialize();
+    Tickms = tickms;
     MachineRequestAlarm(tickms * 1000, Callback, NULL);
     TVMMainEntry entry = VMLoadModule(argv[0]);
     if (entry != NULL) {
@@ -141,7 +156,7 @@ TVMStatus VMTickMS(int *tickmsref) {
     if (tickmsref != NULL) {
         TMachineSignalState signal;
         MachineSuspendSignals(&signal);
-        *tickmsref = ticks;
+        *tickmsref = Tickms;
         MachineResumeSignals(&signal);
         return VM_STATUS_SUCCESS;
     } else {
@@ -279,7 +294,6 @@ TVMStatus VMThreadSleep(TVMTick tick) {
     TCB& CurrentThread = ThreadList[RunningThreadID];
     CurrentThread.SleepTime = tick;
     CurrentThread.State = VM_THREAD_STATE_WAITING;
-    Sleep.push_back(CurrentThread);
     Scheduler(VM_THREAD_STATE_WAITING);
     return VM_STATUS_SUCCESS;
 }
