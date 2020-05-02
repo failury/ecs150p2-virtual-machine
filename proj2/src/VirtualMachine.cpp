@@ -23,7 +23,7 @@ typedef void (*TVMMainEntry)(int, char*[]);
 void Scheduler(TVMThreadState State);
 volatile int ticks = 0;
 volatile int tickCount = 0;
-TVMThreadID RunningThreadID;
+volatile TVMThreadID RunningThreadID;
 struct TCB {
     //define tcb model
     TVMThreadID ID;
@@ -31,7 +31,7 @@ struct TCB {
     TVMThreadPriority Priority;
     TVMThreadEntry Entry;
     SMachineContext Context;
-    int SleepTime;
+    volatile int SleepTime;
     TVMMemorySize MemorySize;
     void *Param;
     void *StackAddress;
@@ -49,7 +49,7 @@ void Callback(void *CallData) {
     MachineSuspendSignals(&signal);
     for (int i = 0; i < (int)Sleep.size(); i++) {
         Sleep[i].SleepTime--;
-        if (Sleep[i].SleepTime < 1) {
+        if (Sleep[i].SleepTime < 1 && Sleep[i].State != VM_THREAD_STATE_DEAD) {
             TCB AwakeThread = Sleep[i];
             Sleep.erase(Sleep.begin() + i);
             AwakeThread.State = VM_THREAD_STATE_READY;
@@ -59,6 +59,9 @@ void Callback(void *CallData) {
 //        char tmp[12]={0x0};
 //        sprintf(tmp,"%11d", int(Sleep[i].SleepTime));
 //        write(STDOUT_FILENO,tmp,sizeof(tmp));
+    }
+    if ( ThreadList[RunningThreadID].Priority == ThreadList[Ready.front().ID].Priority){
+        Scheduler(VM_THREAD_STATE_READY);
     }
     MachineResumeSignals(&signal);
 }
@@ -86,16 +89,18 @@ void Scheduler(TVMThreadState State) {
         Sleep.push_back( ThreadList[RunningThreadID]);
     } else if ( State == VM_THREAD_STATE_DEAD){
         ThreadList[RunningThreadID].State = VM_THREAD_STATE_DEAD;
+        Sleep[RunningThreadID].State = VM_THREAD_STATE_DEAD;
+        ThreadList[RunningThreadID].SleepTime = 0;
     }
     ThreadList[NextThread.ID].State = VM_THREAD_STATE_RUNNING;
     RunningThreadID = NextThread.ID;
-    char tmp[12]={0x0};
-    sprintf(tmp,"%11d", int(TempID));
-    write(STDOUT_FILENO,tmp,sizeof(tmp));
-    write(STDOUT_FILENO,"Switchto",8);
-    sprintf(tmp,"%11d", int(NextThread.ID));
-    write(STDOUT_FILENO,tmp,sizeof(tmp));
-    write(STDOUT_FILENO,"\n",1);
+//    char tmp[12]={0x0};
+//    sprintf(tmp,"%11d", int(TempID));
+//    write(STDOUT_FILENO,tmp,sizeof(tmp));
+//    write(STDOUT_FILENO,"Switchto",8);
+//    sprintf(tmp,"%11d", int(NextThread.ID));
+//    write(STDOUT_FILENO,tmp,sizeof(tmp));
+//    write(STDOUT_FILENO,"\n",1);
     MachineContextSwitch(&ThreadList[TempID].Context, &ThreadList[NextThread.ID].Context);
     MachineResumeSignals(&signal);
 }
@@ -119,8 +124,8 @@ TVMStatus VMStart(int tickms, int argc, char *argv[]) {
     if (entry != NULL) {
         TVMThreadID id;
         MachineEnableSignals();
-        VMThreadCreate(skeleton, NULL, 0x100000, VM_THREAD_PRIORITY_NORMAL, &id);
-        VMThreadCreate(IdleThread, NULL, 0x100000, 0, &id);
+        VMThreadCreate(skeleton, NULL, 0x100000, VM_THREAD_PRIORITY_NORMAL, &id);//creating main thread
+        VMThreadCreate(IdleThread, NULL, 0x100000, 0, &id);// creating idel thread
         VMThreadActivate(id);
         ThreadList[0].State = VM_THREAD_STATE_RUNNING;
     } else {
@@ -132,8 +137,6 @@ TVMStatus VMStart(int tickms, int argc, char *argv[]) {
     MachineTerminate();
     return VM_STATUS_SUCCESS;
 }
-
-
 TVMStatus VMTickMS(int *tickmsref) {
     if (tickmsref != NULL) {
         TMachineSignalState signal;
@@ -192,7 +195,6 @@ TVMStatus VMThreadDelete(TVMThreadID thread) {
     }
     return VM_STATUS_ERROR_INVALID_STATE;
 }
-
 TVMStatus VMThreadActivate(TVMThreadID thread) {
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
@@ -203,14 +205,10 @@ TVMStatus VMThreadActivate(TVMThreadID thread) {
     }
     MachineContextCreate(&ThreadList[thread].Context, skeleton, (void*) (&(ThreadList[thread].ID)), ThreadList[thread].StackAddress,
                          ThreadList[thread].MemorySize);
-//    char tmp[12]={0x0};
-//    write(STDOUT_FILENO,"||||",4);
-//    sprintf(tmp,"%11d", int(ThreadList[thread].Priority));
-//    write(STDOUT_FILENO,tmp,sizeof(tmp));
-//    write(STDOUT_FILENO,"||||",4);
-//    write(STDOUT_FILENO,"\n",1);
     ThreadList[thread].State = VM_THREAD_STATE_READY;
-    if (ThreadList[thread].Priority > 0) Ready.push_back(ThreadList[thread]);
+    if (ThreadList[thread].Priority > 0) {
+        Ready.push_back(ThreadList[thread]);
+    }
     if (ThreadList[thread].Priority > ThreadList[RunningThreadID].Priority) {
         ThreadList[RunningThreadID].State = VM_THREAD_STATE_READY;
         Ready.push_back(ThreadList[RunningThreadID]);
@@ -226,14 +224,18 @@ TVMStatus VMThreadTerminate(TVMThreadID thread) {
     } else if (ThreadList[thread].State == VM_THREAD_STATE_DEAD) {
         return VM_STATUS_ERROR_INVALID_STATE;
     }
+//    char tmp[12]={0x0};
+//    sprintf(tmp,"%11d", int(thread));
+//    write(STDOUT_FILENO,tmp,sizeof(tmp));
+//    write(STDOUT_FILENO,"\n",1);
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
-
     if(ThreadList[thread].State == VM_THREAD_STATE_RUNNING){
         if(Sleep.empty() && Ready.empty()){
             MachineResumeSignals(&signal);
             return VM_STATUS_SUCCESS;
         }
+//        write(STDOUT_FILENO,"ter",3);
         Scheduler(VM_THREAD_STATE_DEAD);
     }else if ( ThreadList[thread].State == VM_THREAD_STATE_WAITING){
         for ( int i =0; i < Sleep.size(); i++){
@@ -253,7 +255,6 @@ TVMStatus VMThreadID(TVMThreadIDRef threadref) {
     }
     TMachineSignalState signal;
     MachineSuspendSignals(&signal);
-    //Schedule()
     *threadref = RunningThreadID;
     MachineResumeSignals(&signal);
     return VM_STATUS_SUCCESS;
@@ -281,7 +282,6 @@ TVMStatus VMThreadSleep(TVMTick tick) {
     Sleep.push_back(CurrentThread);
     Scheduler(VM_THREAD_STATE_WAITING);
     return VM_STATUS_SUCCESS;
-
 }
 void FileCallback(void *calldata, int result)
 {
@@ -356,6 +356,5 @@ TVMStatus VMFileSeek(int filedescriptor, int offset, int whence, int *newoffset)
     Scheduler(VM_THREAD_STATE_WAITING);
     MachineResumeSignals(&signal);
     return VM_STATUS_SUCCESS;
-
 }
 }
